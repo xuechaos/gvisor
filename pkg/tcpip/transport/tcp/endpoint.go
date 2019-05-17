@@ -116,6 +116,7 @@ const (
 	notifyMTUChanged
 	notifyDrain
 	notifyReset
+	notifyResetByPeer
 	notifyKeepaliveChanged
 )
 
@@ -1422,8 +1423,10 @@ func (e *endpoint) Listen(backlog int) (err *tcpip.Error) {
 // startAcceptedLoop sets up required state and starts a goroutine with the
 // main loop for accepted connections.
 func (e *endpoint) startAcceptedLoop(waiterQueue *waiter.Queue) {
+	e.mu.Lock()
 	e.waiterQueue = waiterQueue
 	e.workerRunning = true
+	e.mu.Unlock()
 	go e.protocolMainLoop(false) // S/R-SAFE: drained on save.
 }
 
@@ -1553,34 +1556,10 @@ func (e *endpoint) GetRemoteAddress() (tcpip.FullAddress, *tcpip.Error) {
 // HandlePacket is called by the stack when new packets arrive to this transport
 // endpoint.
 func (e *endpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID, vv buffer.VectorisedView) {
-	s := newSegment(r, id, vv)
-	if !s.parse() {
-		e.stack.Stats().MalformedRcvdPackets.Increment()
-		e.stack.Stats().TCP.InvalidSegmentsReceived.Increment()
-		s.decRef()
-		return
-	}
-
-	if !s.csumValid {
-		e.stack.Stats().MalformedRcvdPackets.Increment()
-		e.stack.Stats().TCP.ChecksumErrors.Increment()
-		s.decRef()
-		return
-	}
-
-	e.stack.Stats().TCP.ValidSegmentsReceived.Increment()
-	if (s.flags & header.TCPFlagRst) != 0 {
-		e.stack.Stats().TCP.ResetsReceived.Increment()
-	}
-
-	// Send packet to worker goroutine.
-	if e.segmentQueue.enqueue(s) {
-		e.newSegmentWaker.Assert()
-	} else {
-		// The queue is full, so we drop the segment.
-		e.stack.Stats().DroppedPackets.Increment()
-		s.decRef()
-	}
+	// TCP HandlePacket is not required anymore as inbound packets first
+	// land at the Dispatcher which then can either delivery using the
+	// worker go routine or directly do the invoke the tcp processing inline
+	// based on the state of the endpoint.
 }
 
 // HandleControlPacket implements stack.TransportEndpoint.HandleControlPacket.

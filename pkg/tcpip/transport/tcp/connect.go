@@ -720,9 +720,7 @@ func (e *endpoint) completeWorkerLocked() {
 	}
 }
 
-// handleSegments pulls segments from the queue and processes them. It returns
-// no error if the protocol loop should continue, an error otherwise.
-func (e *endpoint) handleSegments() *tcpip.Error {
+func (e *endpoint) handleSegments() (err *tcpip.Error) {
 	checkRequeue := true
 	for i := 0; i < maxSegmentsPerWake; i++ {
 		s := e.segmentQueue.dequeue()
@@ -730,49 +728,64 @@ func (e *endpoint) handleSegments() *tcpip.Error {
 			checkRequeue = false
 			break
 		}
-
-		// Invoke the tcp probe if installed.
-		if e.probe != nil {
-			e.probe(e.completeState())
+		if err := e.handleSegment(s); err != nil {
+			return err
 		}
-
-		if s.flagIsSet(header.TCPFlagRst) {
-			if e.rcv.acceptable(s.sequenceNumber, 0) {
-				// RFC 793, page 37 states that "in all states
-				// except SYN-SENT, all reset (RST) segments are
-				// validated by checking their SEQ-fields." So
-				// we only process it if it's acceptable.
-				s.decRef()
-				return tcpip.ErrConnectionReset
-			}
-		} else if s.flagIsSet(header.TCPFlagAck) {
-			// Patch the window size in the segment according to the
-			// send window scale.
-			s.window <<= e.snd.sndWndScale
-
-			// RFC 793, page 41 states that "once in the ESTABLISHED
-			// state all segments must carry current acknowledgment
-			// information."
-			e.rcv.handleRcvdSegment(s)
-			e.snd.handleRcvdSegment(s)
-		}
-		s.decRef()
 	}
 
-	// If the queue is not empty, make sure we'll wake up in the next
-	// iteration.
 	if checkRequeue && !e.segmentQueue.empty() {
 		e.newSegmentWaker.Assert()
 	}
+	// Send an ACK for all processed packets if needed.
+	e.maybeSendAck()
+	e.resetKeepaliveTimer(true)
+	return nil
+}
 
+// handleSegment handles a given segment and notifies the worker goroutine if
+// if the connection should be terminated. It does acquire the worker mutex
+// to avoid any races with the worker goroutine.
+func (e *endpoint) handleSegment(s *segment) (err *tcpip.Error) {
+	// Invoke the tcp probe if installed.
+	if e.probe != nil {
+		e.probe(e.completeState())
+	}
+
+	if s.flagIsSet(header.TCPFlagRst) {
+		if e.rcv.acceptable(s.sequenceNumber, 0) {
+			// RFC 793, page 37 states that "in all states
+			// except SYN-SENT, all reset (RST) segments are
+			// validated by checking their SEQ-fields." So
+			// we only process it if it's acceptable.
+			s.decRef()
+			e.workMu.Unlock()
+			// Notify protocol goroutine. This is required when
+			// handleSegment is invoked from the processor goroutine
+			// rather than the worker goroutine.
+			e.notifyProtocolGoroutine(notifyResetByPeer)
+			return tcpip.ErrConnectionReset
+		}
+	} else if s.flagIsSet(header.TCPFlagAck) {
+		// Patch the window size in the segment according to the
+		// send window scale.
+		s.window <<= e.snd.sndWndScale
+
+		// RFC 793, page 41 states that "once in the ESTABLISHED
+		// state all segments must carry current acknowledgment
+		// information."
+		e.rcv.handleRcvdSegment(s)
+		e.snd.handleRcvdSegment(s)
+	}
+	s.decRef()
+
+	return nil
+}
+
+func (e *endpoint) maybeSendAck() {
 	// Send an ACK for all processed packets if needed.
 	if e.rcv.rcvNxt != e.snd.maxSentAck {
 		e.snd.sendAck()
 	}
-
-	e.resetKeepaliveTimer(true)
-
-	return nil
 }
 
 // keepaliveTimerExpired is called when the keepaliveTimer fires. We send TCP
@@ -852,7 +865,7 @@ func (e *endpoint) protocolMainLoop(handshake bool) *tcpip.Error {
 		}
 
 		e.mu.Unlock()
-
+		e.workMu.Unlock()
 		// When the protocol loop exits we should wake up our waiters.
 		e.waiterQueue.Notify(waiter.EventHUp | waiter.EventErr | waiter.EventIn | waiter.EventOut)
 	}
@@ -899,6 +912,18 @@ func (e *endpoint) protocolMainLoop(handshake bool) *tcpip.Error {
 	e.state = StateEstablished
 	drained := e.drainDone != nil
 	e.mu.Unlock()
+	// At this point there could be segments in the segment queue of this endpoint
+	// that need to be processed before the processor fast path starts delivering
+	// packets.
+	for {
+		s := e.segmentQueue.dequeue()
+		if s == nil {
+			break
+		}
+		e.handleSegment(s)
+	}
+	e.maybeSendAck()
+
 	if drained {
 		close(e.drainDone)
 		<-e.undrain
@@ -921,10 +946,6 @@ func (e *endpoint) protocolMainLoop(handshake bool) *tcpip.Error {
 			f: e.handleClose,
 		},
 		{
-			w: &e.newSegmentWaker,
-			f: e.handleSegments,
-		},
-		{
 			w: &closeWaker,
 			f: func() *tcpip.Error {
 				return tcpip.ErrConnectionAborted
@@ -938,6 +959,10 @@ func (e *endpoint) protocolMainLoop(handshake bool) *tcpip.Error {
 				}
 				return nil
 			},
+		},
+		{
+			w: &e.newSegmentWaker,
+			f: e.handleSegments,
 		},
 		{
 			w: &e.keepalive.waker,
@@ -969,6 +994,9 @@ func (e *endpoint) protocolMainLoop(handshake bool) *tcpip.Error {
 					e.mu.Lock()
 					e.resetConnectionLocked(tcpip.ErrConnectionAborted)
 					e.mu.Unlock()
+				}
+				if n&notifyResetByPeer != 0 {
+					return tcpip.ErrConnectionReset
 				}
 				if n&notifyClose != 0 && closeTimer == nil {
 					// Reset the connection 3 seconds after

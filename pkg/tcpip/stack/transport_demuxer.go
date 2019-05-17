@@ -65,17 +65,33 @@ func (eps *transportEndpoints) unregisterEndpoint(id TransportEndpointID, ep Tra
 // newTransportDemuxer.
 type transportDemuxer struct {
 	// protocol is immutable.
-	protocol map[protocolIDs]*transportEndpoints
+	protocol        map[protocolIDs]*transportEndpoints
+	queuedProtocols map[protocolIDs]queuedTransportProtocol
+}
+
+// queuedTransportProtocol if supported by a protocol implementation will cause
+// the dispatcher to delivery packets to the QueuePacket method instead of
+// calling HandlePacket directly on the endpoint.
+type queuedTransportProtocol interface {
+	QueuePacket(r *Route, ep TransportEndpoint, id TransportEndpointID, vv buffer.VectorisedView)
 }
 
 func newTransportDemuxer(stack *Stack) *transportDemuxer {
-	d := &transportDemuxer{protocol: make(map[protocolIDs]*transportEndpoints)}
+	d := &transportDemuxer{
+		protocol:        make(map[protocolIDs]*transportEndpoints),
+		queuedProtocols: make(map[protocolIDs]queuedTransportProtocol),
+	}
 
 	// Add each network and transport pair to the demuxer.
 	for netProto := range stack.networkProtocols {
 		for proto := range stack.transportProtocols {
-			d.protocol[protocolIDs{netProto, proto}] = &transportEndpoints{
+			protoIDs := protocolIDs{netProto, proto}
+			d.protocol[protoIDs] = &transportEndpoints{
 				endpoints: make(map[TransportEndpointID]TransportEndpoint),
+			}
+			qTransProto, isQueued := (stack.transportProtocols[proto].proto).(queuedTransportProtocol)
+			if isQueued {
+				d.queuedProtocols[protoIDs] = qTransProto
 			}
 		}
 	}
@@ -99,6 +115,9 @@ func (d *transportDemuxer) registerEndpoint(netProtos []tcpip.NetworkProtocolNum
 // multiPortEndpoint is a container for TransportEndpoints which are bound to
 // the same pair of address and port.
 type multiPortEndpoint struct {
+	demux        *transportDemuxer
+	netProto     tcpip.NetworkProtocolNumber
+	transProto   tcpip.TransportProtocolNumber
 	mu           sync.RWMutex
 	endpointsArr []TransportEndpoint
 	endpointsMap map[TransportEndpoint]int
@@ -152,9 +171,17 @@ func (ep *multiPortEndpoint) HandlePacket(r *Route, id TransportEndpointID, vv b
 			}
 			vvCopy := buffer.NewView(vv.Size())
 			copy(vvCopy, vv.ToView())
+			if queuedProtocol, ok := ep.demux.queuedProtocols[protocolIDs{ep.netProto, ep.transProto}]; ok {
+				queuedProtocol.QueuePacket(r, endpoint, id, vvCopy.ToVectorisedView())
+				continue
+			}
 			endpoint.HandlePacket(r, id, vvCopy.ToVectorisedView())
 		}
 	} else {
+		if queuedProtocol, ok := ep.demux.queuedProtocols[protocolIDs{ep.netProto, ep.transProto}]; ok {
+			queuedProtocol.QueuePacket(r, ep.selectEndpoint(id), id, vv)
+			return
+		}
 		ep.selectEndpoint(id).HandlePacket(r, id, vv)
 	}
 }
@@ -223,7 +250,7 @@ func (d *transportDemuxer) singleRegisterEndpoint(netProto tcpip.NetworkProtocol
 
 	if reusePort {
 		if multiPortEp == nil {
-			multiPortEp = &multiPortEndpoint{}
+			multiPortEp = &multiPortEndpoint{demux: d, netProto: netProto, transProto: protocol}
 			multiPortEp.endpointsMap = make(map[TransportEndpoint]int)
 			multiPortEp.seed = rand.Uint32()
 			eps.endpoints[id] = multiPortEp
@@ -299,6 +326,14 @@ func (d *transportDemuxer) deliverPacket(r *Route, protocol tcpip.TransportProto
 
 	// Deliver the packet.
 	for _, ep := range destEps {
+		if mep, ok := ep.(*multiPortEndpoint); ok {
+			mep.HandlePacket(r, id, vv)
+			continue
+		}
+		if queuedProtocol, ok := d.queuedProtocols[protocolIDs{r.NetProto, protocol}]; ok {
+			queuedProtocol.QueuePacket(r, ep, id, vv)
+			continue
+		}
 		ep.HandlePacket(r, id, vv)
 	}
 
