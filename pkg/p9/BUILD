@@ -12,6 +12,7 @@ go_library(
         "client.go",
         "client_file.go",
         "file.go",
+        "flipcall.go",
         "handlers.go",
         "messages.go",
         "p9.go",
@@ -19,11 +20,14 @@ go_library(
         "pool.go",
         "server.go",
         "transport.go",
+        "transport_flipcall.go",
         "version.go",
     ],
     importpath = "gvisor.dev/gvisor/pkg/p9",
     deps = [
         "//pkg/fd",
+        "//pkg/fdchannel",
+        "//pkg/flipcall",
         "//pkg/log",
         "//pkg/unet",
         "@org_golang_x_sys//unix:go_default_library",
@@ -45,6 +49,7 @@ go_test(
     embed = [":p9"],
     deps = [
         "//pkg/fd",
+        "//pkg/flipcall",
         "//pkg/unet",
     ],
 )
