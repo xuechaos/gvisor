@@ -451,19 +451,6 @@ func TestMultiContainerDestroy(t *testing.T) {
 		}
 		defer cleanup()
 
-		// Exec in the root container to check for the existence of the
-		// second container's root filesystem directory.
-		contDir := path.Join(boot.ChildContainersDir, containers[1].ID)
-		dirArgs := &control.ExecArgs{
-			Filename: "/usr/bin/test",
-			Argv:     []string{"test", "-d", contDir},
-		}
-		if ws, err := containers[0].executeSync(dirArgs); err != nil {
-			t.Fatalf("error executing %+v: %v", dirArgs, err)
-		} else if ws.ExitStatus() != 0 {
-			t.Errorf("exec 'test -f %q' got exit status %d, wanted 0", contDir, ws.ExitStatus())
-		}
-
 		// Exec more processes to ensure signal all works for exec'd processes too.
 		args := &control.ExecArgs{
 			Filename: app,
@@ -489,13 +476,6 @@ func TestMultiContainerDestroy(t *testing.T) {
 		expectedPL := []*control.Process{{PID: 1, Cmd: "test_app"}}
 		if !procListsEqual(pss, expectedPL) {
 			t.Errorf("container got process list: %s, want: %s", procListToString(pss), procListToString(expectedPL))
-		}
-
-		// Now the container dir should be gone.
-		if ws, err := containers[0].executeSync(dirArgs); err != nil {
-			t.Fatalf("error executing %+v: %v", dirArgs, err)
-		} else if ws.ExitStatus() == 0 {
-			t.Errorf("exec 'test -f %q' got exit status 0, wanted non-zero", contDir)
 		}
 
 		// Check that cont.Destroy is safe to call multiple times.
