@@ -1,7 +1,6 @@
-load("//tools/go_stateify:defs.bzl", "go_library")
-load("@io_bazel_rules_go//proto:def.bzl", "go_proto_library")
-
 package(licenses = ["notice"])
+
+load("//tools:defs.bzl", "go_library", "proto_library")
 
 go_library(
     name = "memevent",
@@ -19,14 +18,6 @@ go_library(
 )
 
 proto_library(
-    name = "memory_events_proto",
     srcs = ["memory_events.proto"],
-    visibility = ["//visibility:public"],
-)
-
-go_proto_library(
-    name = "memory_events_go_proto",
-    importpath = "gvisor.dev/gvisor/pkg/sentry/kernel/memevent/memory_events_go_proto",
-    proto = ":memory_events_proto",
     visibility = ["//visibility:public"],
 )

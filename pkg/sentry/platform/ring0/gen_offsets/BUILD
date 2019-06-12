@@ -1,7 +1,6 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_binary")
-
 package(licenses = ["notice"])
 
+load("//tools:defs.bzl", "go_binary")
 load("//tools/go_generics:defs.bzl", "go_template_instance")
 
 go_template_instance(

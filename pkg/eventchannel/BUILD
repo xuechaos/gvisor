@@ -1,12 +1,11 @@
-load("//tools/go_stateify:defs.bzl", "go_library")
-load("@io_bazel_rules_go//proto:def.bzl", "go_proto_library")
-
 package(licenses = ["notice"])
+
+load("//tools:defs.bzl", "go_library", "proto_library")
 
 go_library(
     name = "eventchannel",
     srcs = [
-        "event.go",
+        "eventchannel.go",
     ],
     importpath = "gvisor.dev/gvisor/pkg/eventchannel",
     visibility = ["//:sandbox"],
@@ -20,13 +19,6 @@ go_library(
 )
 
 proto_library(
-    name = "eventchannel_proto",
-    srcs = ["event.proto"],
-)
-
-go_proto_library(
-    name = "eventchannel_go_proto",
-    importpath = "gvisor.dev/gvisor/pkg/eventchannel/eventchannel_go_proto",
-    proto = ":eventchannel_proto",
+    srcs = ["eventchannel.proto"],
     visibility = ["//:sandbox"],
 )

@@ -1,6 +1,6 @@
 package(licenses = ["notice"])
 
-load("//tools/go_stateify:defs.bzl", "go_library", "go_test")
+load("//tools:defs.bzl", "go_library", "go_test")
 
 go_library(
     name = "tmpfs",

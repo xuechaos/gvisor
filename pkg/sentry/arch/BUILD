@@ -1,8 +1,6 @@
-load("@io_bazel_rules_go//proto:def.bzl", "go_proto_library")
-
 package(licenses = ["notice"])
 
-load("//tools/go_stateify:defs.bzl", "go_library")
+load("//tools:defs.bzl", "go_library", "proto_library")
 
 go_library(
     name = "arch",
@@ -37,14 +35,6 @@ go_library(
 )
 
 proto_library(
-    name = "registers_proto",
     srcs = ["registers.proto"],
-    visibility = ["//visibility:public"],
-)
-
-go_proto_library(
-    name = "registers_go_proto",
-    importpath = "gvisor.dev/gvisor/pkg/sentry/arch/registers_go_proto",
-    proto = ":registers_proto",
     visibility = ["//visibility:public"],
 )

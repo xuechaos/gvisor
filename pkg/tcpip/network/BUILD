@@ -1,5 +1,3 @@
-load("//tools/go_stateify:defs.bzl", "go_test")
-
 package(licenses = ["notice"])
 
 go_test(

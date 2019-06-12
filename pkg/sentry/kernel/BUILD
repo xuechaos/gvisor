@@ -1,9 +1,7 @@
-load("@io_bazel_rules_go//proto:def.bzl", "go_proto_library")
-
 package(licenses = ["notice"])
 
 load("//tools/go_generics:defs.bzl", "go_template_instance")
-load("//tools/go_stateify:defs.bzl", "go_library", "go_test")
+load("//tools:defs.bzl", "go_library", "go_test", "proto_library")
 
 go_template_instance(
     name = "pending_signals_list",
@@ -77,18 +75,9 @@ go_template_instance(
 )
 
 proto_library(
-    name = "uncaught_signal_proto",
     srcs = ["uncaught_signal.proto"],
     visibility = ["//visibility:public"],
     deps = ["//pkg/sentry/arch:registers_proto"],
-)
-
-go_proto_library(
-    name = "uncaught_signal_go_proto",
-    importpath = "gvisor.dev/gvisor/pkg/sentry/kernel/uncaught_signal_go_proto",
-    proto = ":uncaught_signal_proto",
-    visibility = ["//visibility:public"],
-    deps = ["//pkg/sentry/arch:registers_go_proto"],
 )
 
 go_library(

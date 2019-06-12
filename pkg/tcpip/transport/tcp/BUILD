@@ -1,7 +1,7 @@
 package(licenses = ["notice"])
 
 load("//tools/go_generics:defs.bzl", "go_template_instance")
-load("//tools/go_stateify:defs.bzl", "go_library", "go_test")
+load("//tools:defs.bzl", "go_library", "go_test")
 
 go_template_instance(
     name = "tcp_segment_list",

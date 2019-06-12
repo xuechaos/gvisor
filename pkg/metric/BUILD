@@ -1,7 +1,6 @@
-load("//tools/go_stateify:defs.bzl", "go_library", "go_test")
-load("@io_bazel_rules_go//proto:def.bzl", "go_proto_library")
-
 package(licenses = ["notice"])
+
+load("//tools:defs.bzl", "go_library", "go_test", "proto_library")
 
 go_library(
     name = "metric",
@@ -16,15 +15,7 @@ go_library(
 )
 
 proto_library(
-    name = "metric_proto",
     srcs = ["metric.proto"],
-    visibility = ["//:sandbox"],
-)
-
-go_proto_library(
-    name = "metric_go_proto",
-    importpath = "gvisor.dev/gvisor/pkg/metric/metric_go_proto",
-    proto = ":metric_proto",
     visibility = ["//:sandbox"],
 )
 

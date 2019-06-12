@@ -1,7 +1,6 @@
-load("//tools/go_stateify:defs.bzl", "go_library")
-load("@io_bazel_rules_go//proto:def.bzl", "go_proto_library")
-
 package(licenses = ["notice"])
+
+load("//tools:defs.bzl", "go_library", "proto_library")
 
 go_library(
     name = "rpcinet",
@@ -43,17 +42,7 @@ go_library(
 )
 
 proto_library(
-    name = "syscall_rpc_proto",
     srcs = ["syscall_rpc.proto"],
-    visibility = [
-        "//visibility:public",
-    ],
-)
-
-go_proto_library(
-    name = "syscall_rpc_go_proto",
-    importpath = "gvisor.dev/gvisor/pkg/sentry/socket/rpcinet/syscall_rpc_go_proto",
-    proto = ":syscall_rpc_proto",
     visibility = [
         "//visibility:public",
     ],

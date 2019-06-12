@@ -1,15 +1,5 @@
 """Stateify is a tool for generating state wrappers for Go types.
 
-The recommended way is to use the go_library rule defined below with mostly
-identical configuration as the native go_library rule.
-
-load("//tools/go_stateify:defs.bzl", "go_library")
-
-go_library(
-    name = "foo",
-    srcs = ["foo.go"],
-)
-
 Under the hood, the go_stateify rule is used to generate a file that will
 appear in a Go target; the output file should appear explicitly in a srcs list.
 For example (the above is still the preferred way):
@@ -34,8 +24,6 @@ go_library(
     ],
 )
 """
-
-load("@io_bazel_rules_go//go:def.bzl", _go_library = "go_library", _go_test = "go_test")
 
 def _go_stateify_impl(ctx):
     """Implementation for the stateify tool."""
@@ -79,35 +67,3 @@ go_stateify = rule(
         "_statepkg": attr.string(default = "gvisor.dev/gvisor/pkg/state"),
     },
 )
-
-def go_library(name, srcs, deps = [], imports = [], **kwargs):
-    """wraps the standard go_library and does stateification."""
-    if "encode_unsafe.go" not in srcs and (name + "_state_autogen.go") not in srcs:
-        # Only do stateification for non-state packages without manual autogen.
-        go_stateify(
-            name = name + "_state_autogen",
-            srcs = [src for src in srcs if src.endswith(".go")],
-            imports = imports,
-            package = name,
-            out = name + "_state_autogen.go",
-        )
-        all_srcs = srcs + [name + "_state_autogen.go"]
-        if "//pkg/state" not in deps:
-            all_deps = deps + ["//pkg/state"]
-        else:
-            all_deps = deps
-    else:
-        all_deps = deps
-        all_srcs = srcs
-    _go_library(
-        name = name,
-        srcs = all_srcs,
-        deps = all_deps,
-        **kwargs
-    )
-
-def go_test(**kwargs):
-    """Wraps the standard go_test."""
-    _go_test(
-        **kwargs
-    )

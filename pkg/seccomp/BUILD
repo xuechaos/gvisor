@@ -1,7 +1,8 @@
-load("//tools/go_stateify:defs.bzl", "go_library", "go_test")
-load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_embed_data")
+load("@bazel_tools//tools/go:def.bzl", "go_embed_data")
 
 package(licenses = ["notice"])
+
+load("//tools:defs.bzl", "go_binary", "go_library", "go_test")
 
 go_binary(
     name = "victim",
