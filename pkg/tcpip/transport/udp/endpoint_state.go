@@ -72,7 +72,7 @@ func (e *endpoint) afterLoad() {
 		}
 	}
 
-	if e.state != stateBound && e.state != stateConnected {
+	if e.state != StateBound && e.state != StateConnected {
 		return
 	}
 
@@ -87,14 +87,14 @@ func (e *endpoint) afterLoad() {
 	}
 
 	var err *tcpip.Error
-	if e.state == stateConnected {
+	if e.state == StateConnected {
 		e.route, err = e.stack.FindRoute(e.regNICID, e.id.LocalAddress, e.id.RemoteAddress, netProto, e.multicastLoop)
 		if err != nil {
 			panic(*err)
 		}
 
 		e.id.LocalAddress = e.route.LocalAddress
-	} else if len(e.id.LocalAddress) != 0 { // stateBound
+	} else if len(e.id.LocalAddress) != 0 { // tcp.StateBound
 		if e.stack.CheckLocalAddress(e.regNICID, netProto, e.id.LocalAddress) == 0 {
 			panic(tcpip.ErrBadLocalAddress)
 		}
