@@ -34,6 +34,7 @@ import (
 	"gvisor.dev/gvisor/pkg/rand"
 	"gvisor.dev/gvisor/pkg/sentry/arch"
 	"gvisor.dev/gvisor/pkg/sentry/control"
+	"gvisor.dev/gvisor/pkg/sentry/fs"
 	"gvisor.dev/gvisor/pkg/sentry/fs/host"
 	"gvisor.dev/gvisor/pkg/sentry/inet"
 	"gvisor.dev/gvisor/pkg/sentry/kernel"
@@ -527,13 +528,15 @@ func (l *Loader) run() error {
 		// cid for root container can be empty. Only subcontainers need it to set
 		// the mount location.
 		mntr := newContainerMounter(l.spec, "", l.goferFDs, l.k, l.mountHints)
-		if err := mntr.setupFS(ctx, l.conf, &l.rootProcArgs, l.rootProcArgs.Credentials); err != nil {
+
+		// Setup the root container.
+		if err := mntr.setupRootContainer(ctx, ctx, l.conf, func(mns *fs.MountNamespace) {
+			l.rootProcArgs.MountNamespace = mns
+		}); err != nil {
 			return err
 		}
 
-		rootCtx := l.rootProcArgs.NewContext(l.k)
-		rootMns := l.k.RootMountNamespace()
-		if err := setExecutablePath(rootCtx, rootMns, &l.rootProcArgs); err != nil {
+		if err := setExecutablePath(ctx, &l.rootProcArgs); err != nil {
 			return err
 		}
 
@@ -547,7 +550,7 @@ func (l *Loader) run() error {
 			}
 		}
 		if !hasHomeEnvv {
-			homeDir, err := getExecUserHome(rootCtx, rootMns, uint32(l.rootProcArgs.Credentials.RealKUID))
+			homeDir, err := getExecUserHome(ctx, l.rootProcArgs.MountNamespace, uint32(l.rootProcArgs.Credentials.RealKUID))
 			if err != nil {
 				return fmt.Errorf("error reading exec user: %v", err)
 			}
@@ -666,12 +669,11 @@ func (l *Loader) startContainer(spec *specs.Spec, conf *Config, cid string, file
 	}
 
 	mntr := newContainerMounter(spec, cid, goferFDs, l.k, l.mountHints)
-	if err := mntr.setupFS(ctx, conf, &procArgs, creds); err != nil {
+	if err := mntr.setupChildContainer(conf, &procArgs); err != nil {
 		return fmt.Errorf("configuring container FS: %v", err)
 	}
 
-	mns := l.k.RootMountNamespace()
-	if err := setExecutablePath(ctx, mns, &procArgs); err != nil {
+	if err := setExecutablePath(ctx, &procArgs); err != nil {
 		return fmt.Errorf("setting executable path for %+v: %v", procArgs, err)
 	}
 
@@ -696,8 +698,10 @@ func (l *Loader) destroyContainer(cid string) error {
 	defer l.mu.Unlock()
 
 	// Has the container started?
-	if _, _, err := l.threadGroupFromIDLocked(execID{cid: cid}); err == nil {
-		// If the container has started, kill and wait for all processes.
+	_, _, err := l.threadGroupFromIDLocked(execID{cid: cid})
+
+	// If the container has started, kill and wait for all processes.
+	if err == nil {
 		if err := l.signalAllProcesses(cid, int32(linux.SIGKILL)); err != nil {
 			return fmt.Errorf("sending SIGKILL to all container processes: %v", err)
 		}
@@ -710,12 +714,12 @@ func (l *Loader) destroyContainer(cid string) error {
 		}
 	}
 
-	ctx := l.rootProcArgs.NewContext(l.k)
-	if err := destroyContainerFS(ctx, cid, l.k); err != nil {
-		return fmt.Errorf("destroying filesystem for container %q: %v", cid, err)
-	}
+	// MountNamespace.destroy may trigger async close
+	// operations. We must wait for those to complete before
+	// returning, otherwise the caller may kill the gofer before
+	// they complete, causing a cascade of failing RPCs.
+	fs.AsyncBarrier()
 
-	// We made it!
 	log.Debugf("Container destroyed %q", cid)
 	return nil
 }
@@ -731,14 +735,22 @@ func (l *Loader) executeAsync(args *control.ExecArgs) (kernel.ThreadID, error) {
 		return 0, fmt.Errorf("no such container: %q", args.ContainerID)
 	}
 
-	// Get the container Root Dirent from the Task, since we must run this
-	// process with the same Root.
+	// Get the container Root Dirent and MountNamespace from the Task.
 	tg.Leader().WithMuLocked(func(t *kernel.Task) {
+		// FSContext.RootDirectory() will take an extra ref for us.
 		args.Root = t.FSContext().RootDirectory()
+
+		// task.MountNamespace() does not take a ref, so we must do so
+		// ourselves.
+		args.MountNamespace = t.MountNamespace()
+		args.MountNamespace.IncRef()
 	})
-	if args.Root != nil {
-		defer args.Root.DecRef()
-	}
+	defer func() {
+		if args.Root != nil {
+			args.Root.DecRef()
+		}
+		args.MountNamespace.DecRef()
+	}()
 
 	// Start the process.
 	proc := control.Proc{Kernel: l.k}
