@@ -233,7 +233,8 @@ type SocketOperations struct {
 	// readMu protects access to the below fields.
 	readMu sync.Mutex `state:"nosave"`
 	// readView contains the remaining payload from the last packet.
-	readView buffer.View
+	readView   buffer.View
+	rcvBufUsed int
 	// readCM holds control message information for the last packet read
 	// from Endpoint.
 	readCM tcpip.ControlMessages
@@ -250,6 +251,11 @@ type SocketOperations struct {
 	// timestampNS holds the timestamp to use with SIOCTSTAMP. It is only
 	// valid when timestampValid is true. It is protected by readMu.
 	timestampNS int64
+
+	// sockOptInq corresponds to TCP_INQ. It is implemented on the epsocket
+	// level, because it is too expensive to call an endpoint interface
+	// method on every read.
+	sockOptInq bool
 }
 
 // New creates a new endpoint socket.
@@ -363,12 +369,13 @@ func (s *SocketOperations) fetchReadView() *syserr.Error {
 	s.readView = nil
 	s.sender = tcpip.FullAddress{}
 
-	v, cms, err := s.Endpoint.Read(&s.sender)
+	v, cms, rcvBufUsed, err := s.Endpoint.Read(&s.sender)
 	if err != nil {
 		return syserr.TranslateNetstackError(err)
 	}
 
 	s.readView = v
+	s.rcvBufUsed = rcvBufUsed
 	s.readCM = cms
 
 	return nil
@@ -629,6 +636,18 @@ func (s *SocketOperations) GetSockOpt(t *kernel.Task, level, name, outLen int) (
 		s.readMu.Lock()
 		defer s.readMu.Unlock()
 		if s.sockOptTimestamp {
+			val = 1
+		}
+		return val, nil
+	}
+	if level == linux.SOL_TCP && name == linux.TCP_INQ {
+		if outLen < sizeOfInt32 {
+			return nil, syserr.ErrInvalidArgument
+		}
+		val := int32(0)
+		s.readMu.Lock()
+		defer s.readMu.Unlock()
+		if s.sockOptInq {
 			val = 1
 		}
 		return val, nil
@@ -1035,6 +1054,15 @@ func (s *SocketOperations) SetSockOpt(t *kernel.Task, level int, name int, optVa
 		s.sockOptTimestamp = usermem.ByteOrder.Uint32(optVal) != 0
 		return nil
 	}
+	if level == linux.SOL_TCP && name == linux.TCP_INQ {
+		if len(optVal) < sizeOfInt32 {
+			return syserr.ErrInvalidArgument
+		}
+		s.readMu.Lock()
+		defer s.readMu.Unlock()
+		s.sockOptInq = usermem.ByteOrder.Uint32(optVal) != 0
+		return nil
+	}
 
 	return SetSockOpt(t, s, s.Endpoint, level, name, optVal)
 }
@@ -1246,6 +1274,7 @@ func setSockOptTCP(t *kernel.Task, ep commonEndpoint, name int, optVal []byte) *
 			return syserr.TranslateNetstackError(err)
 		}
 		return nil
+
 	case linux.TCP_REPAIR_OPTIONS:
 		t.Kernel().EmitUnimplementedEvent(t)
 
@@ -1471,7 +1500,6 @@ func emitUnimplementedEventTCP(t *kernel.Task, name int) {
 		linux.TCP_FASTOPEN_CONNECT,
 		linux.TCP_FASTOPEN_KEY,
 		linux.TCP_FASTOPEN_NO_COOKIE,
-		linux.TCP_INQ,
 		linux.TCP_KEEPCNT,
 		linux.TCP_KEEPIDLE,
 		linux.TCP_KEEPINTVL,
@@ -1726,6 +1754,15 @@ func (s *SocketOperations) coalescingRead(ctx context.Context, dst usermem.IOSeq
 	return 0, err
 }
 
+func (s *SocketOperations) fillCmsgInq(cmsg *socket.ControlMessages) {
+	if !s.sockOptInq {
+		return
+	}
+	cmsg.IP.HasInq = true
+	// TCP_INQ is a hint, so it should be safe to use a cached value.
+	cmsg.IP.Inq = int32(len(s.readView) + s.rcvBufUsed)
+}
+
 // nonBlockingRead issues a non-blocking read.
 //
 // TODO(b/78348848): Support timestamps for stream sockets.
@@ -1745,7 +1782,9 @@ func (s *SocketOperations) nonBlockingRead(ctx context.Context, dst usermem.IOSe
 		s.readMu.Lock()
 		n, err := s.coalescingRead(ctx, dst, trunc)
 		s.readMu.Unlock()
-		return n, 0, nil, 0, socket.ControlMessages{}, err
+		cmsg := s.controlMessages()
+		s.fillCmsgInq(&cmsg)
+		return n, 0, nil, 0, cmsg, err
 	}
 
 	s.readMu.Lock()
@@ -1827,7 +1866,9 @@ func (s *SocketOperations) nonBlockingRead(ctx context.Context, dst usermem.IOSe
 		n = msgLen
 	}
 
-	return n, flags, addr, addrLen, s.controlMessages(), syserr.FromError(err)
+	cmsg := s.controlMessages()
+	s.fillCmsgInq(&cmsg)
+	return n, flags, addr, addrLen, cmsg, syserr.FromError(err)
 }
 
 func (s *SocketOperations) controlMessages() socket.ControlMessages {

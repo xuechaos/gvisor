@@ -151,7 +151,7 @@ func (ep *endpoint) Close() {
 func (ep *endpoint) ModerateRecvBuf(copied int) {}
 
 // Read implements tcpip.Endpoint.Read.
-func (ep *endpoint) Read(addr *tcpip.FullAddress) (buffer.View, tcpip.ControlMessages, *tcpip.Error) {
+func (ep *endpoint) Read(addr *tcpip.FullAddress) (buffer.View, tcpip.ControlMessages, int, *tcpip.Error) {
 	ep.rcvMu.Lock()
 
 	// If there's no data to read, return that read would block or that the
@@ -162,20 +162,20 @@ func (ep *endpoint) Read(addr *tcpip.FullAddress) (buffer.View, tcpip.ControlMes
 			err = tcpip.ErrClosedForReceive
 		}
 		ep.rcvMu.Unlock()
-		return buffer.View{}, tcpip.ControlMessages{}, err
+		return buffer.View{}, tcpip.ControlMessages{}, 0, err
 	}
 
 	packet := ep.rcvList.Front()
 	ep.rcvList.Remove(packet)
 	ep.rcvBufSize -= packet.data.Size()
-
+	rcvBufSize := ep.rcvBufSize
 	ep.rcvMu.Unlock()
 
 	if addr != nil {
 		*addr = packet.senderAddr
 	}
 
-	return packet.data.ToView(), tcpip.ControlMessages{HasTimestamp: true, Timestamp: packet.timestampNS}, nil
+	return packet.data.ToView(), tcpip.ControlMessages{HasTimestamp: true, Timestamp: packet.timestampNS}, rcvBufSize, nil
 }
 
 // Write implements tcpip.Endpoint.Write.

@@ -681,7 +681,7 @@ func (e *endpoint) ModerateRecvBuf(copied int) {
 }
 
 // Read reads data from the endpoint.
-func (e *endpoint) Read(*tcpip.FullAddress) (buffer.View, tcpip.ControlMessages, *tcpip.Error) {
+func (e *endpoint) Read(*tcpip.FullAddress) (buffer.View, tcpip.ControlMessages, int, *tcpip.Error) {
 	e.mu.RLock()
 	// The endpoint can be read if it's connected, or if it's already closed
 	// but has some pending unread data. Also note that a RST being received
@@ -694,25 +694,25 @@ func (e *endpoint) Read(*tcpip.FullAddress) (buffer.View, tcpip.ControlMessages,
 		he := e.hardError
 		e.mu.RUnlock()
 		if s == StateError {
-			return buffer.View{}, tcpip.ControlMessages{}, he
+			return buffer.View{}, tcpip.ControlMessages{}, 0, he
 		}
-		return buffer.View{}, tcpip.ControlMessages{}, tcpip.ErrInvalidEndpointState
+		return buffer.View{}, tcpip.ControlMessages{}, 0, tcpip.ErrInvalidEndpointState
 	}
 
-	v, err := e.readLocked()
+	v, rcvBufUsed, err := e.readLocked()
 	e.rcvListMu.Unlock()
 
 	e.mu.RUnlock()
 
-	return v, tcpip.ControlMessages{}, err
+	return v, tcpip.ControlMessages{}, rcvBufUsed, err
 }
 
-func (e *endpoint) readLocked() (buffer.View, *tcpip.Error) {
+func (e *endpoint) readLocked() (buffer.View, int, *tcpip.Error) {
 	if e.rcvBufUsed == 0 {
 		if e.rcvClosed || !e.state.connected() {
-			return buffer.View{}, tcpip.ErrClosedForReceive
+			return buffer.View{}, 0, tcpip.ErrClosedForReceive
 		}
-		return buffer.View{}, tcpip.ErrWouldBlock
+		return buffer.View{}, 0, tcpip.ErrWouldBlock
 	}
 
 	s := e.rcvList.Front()
@@ -734,7 +734,7 @@ func (e *endpoint) readLocked() (buffer.View, *tcpip.Error) {
 		e.notifyProtocolGoroutine(notifyNonZeroReceiveWindow)
 	}
 
-	return v, nil
+	return v, e.rcvBufUsed, nil
 }
 
 // Write writes data to the endpoint's peer.

@@ -287,6 +287,12 @@ type ControlMessages struct {
 	// Timestamp is the time (in ns) that the last packed used to create
 	// the read data was received.
 	Timestamp int64
+
+	// HasInq indicates whether Inq is valid/set.
+	HasInq bool
+
+	// Inq is the number of bytes ready to be received.
+	Inq int32
 }
 
 // Endpoint is the interface implemented by transport protocols (e.g., tcp, udp)
@@ -301,7 +307,10 @@ type Endpoint interface {
 	//
 	// This method does not block if there is no data pending. It will also
 	// either return an error or data, never both.
-	Read(*FullAddress) (buffer.View, ControlMessages, *Error)
+	//
+	// The third return value is a number of bytes what remain in the receive
+	// queue.
+	Read(*FullAddress) (buffer.View, ControlMessages, int, *Error)
 
 	// Write writes data to the endpoint's peer. This method does not block if
 	// the data cannot be written.
