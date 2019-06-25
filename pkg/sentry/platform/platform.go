@@ -19,8 +19,10 @@ package platform
 
 import (
 	"fmt"
+	"os"
 
 	"gvisor.dev/gvisor/pkg/abi/linux"
+	"gvisor.dev/gvisor/pkg/seccomp"
 	"gvisor.dev/gvisor/pkg/sentry/arch"
 	"gvisor.dev/gvisor/pkg/sentry/safemem"
 	"gvisor.dev/gvisor/pkg/sentry/usermem"
@@ -93,6 +95,9 @@ type Platform interface {
 	// Platforms for which this does not hold may panic if PreemptAllCPUs is
 	// called.
 	PreemptAllCPUs() error
+
+	// SeccompFilters returns syscalls made exclusively by tjis platform.
+	SeccompFilters() seccomp.SyscallRules
 }
 
 // NoCPUPreemptionDetection implements Platform.DetectsCPUPreemption and
@@ -346,4 +351,26 @@ type File interface {
 // String implements fmt.Stringer.String.
 func (fr FileRange) String() string {
 	return fmt.Sprintf("[%#x, %#x)", fr.Start, fr.End)
+}
+
+// Constructor represents a platform type.
+type Constructor interface {
+	New(deviceFile *os.File) (Platform, error)
+	OpenDevice() (*os.File, error)
+}
+
+// platforms contains all available platform types.
+var platforms = map[string]Constructor{}
+
+// Register registers a new platform.
+func Register(name string, platform Constructor) {
+	platforms[name] = platform
+}
+
+// Lookup looks up a platform construct by name.
+func Lookup(name string) (Constructor, error) {
+	if p, ok := platforms[name]; ok {
+		return p, nil
+	}
+	return nil, fmt.Errorf("unknown platform: %v", name)
 }

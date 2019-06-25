@@ -139,10 +139,7 @@ func main() {
 	}
 	cmd.ErrorLogger = errorLogger
 
-	platformType, err := boot.MakePlatformType(*platform)
-	if err != nil {
-		cmd.Fatalf("%v", err)
-	}
+	platformType := *platform
 
 	fsAccess, err := boot.MakeFileAccessType(*fileAccess)
 	if err != nil {

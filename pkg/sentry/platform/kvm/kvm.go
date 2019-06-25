@@ -141,3 +141,17 @@ func (k *KVM) NewContext() platform.Context {
 		machine: k.machine,
 	}
 }
+
+type constructor struct{}
+
+func (k *constructor) New(f *os.File) (platform.Platform, error) {
+	return New(f)
+}
+
+func (k *constructor) OpenDevice() (*os.File, error) {
+	return OpenDevice()
+}
+
+func init() {
+	platform.Register("kvm", &constructor{})
+}
