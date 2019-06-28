@@ -220,9 +220,9 @@ func (r *receiver) consumeSegment(s *segment, segSeq seqnum.Value, segLen seqnum
 	return true
 }
 
-// updateRTT updates the receiver RTT measurement based on the sequence number
-// of the received segment.
-func (r *receiver) updateRTT() {
+// updateTimers updates the receiver RTT measurement based on the sequence
+// number of the received segment, as well as the last received timestamps.
+func (r *receiver) updateTimers(s *segment) {
 	// From: https://public.lanl.gov/radiant/pubs/drs/sc2001-poster.pdf
 	//
 	// A system that is only transmitting acknowledgements can still
@@ -230,6 +230,20 @@ func (r *receiver) updateRTT() {
 	// is first acknowledged and the receipt of data that is at least one
 	// window beyond the sequence number that was acknowledged.
 	r.ep.rcvListMu.Lock()
+
+	if s.data.Size() > 0 {
+		r.ep.rcvLastData = time.Now()
+	}
+	if s.flagIsSet(header.TCPFlagAck) {
+		r.ep.rcvLastAck = time.Now()
+	}
+
+	if s.data.Size() <= 0 {
+		// No data received, don't update RTT.
+		r.ep.rcvListMu.Unlock()
+		return
+	}
+
 	if r.ep.rcvAutoParams.rttMeasureTime.IsZero() {
 		// New measurement.
 		r.ep.rcvAutoParams.rttMeasureTime = time.Now()
@@ -291,11 +305,7 @@ func (r *receiver) handleRcvdSegment(s *segment) {
 		return
 	}
 
-	// Since we consumed a segment update the receiver's RTT estimate
-	// if required.
-	if segLen > 0 {
-		r.updateRTT()
-	}
+	r.updateTimers(s)
 
 	// By consuming the current segment, we may have filled a gap in the
 	// sequence number domain that allows pending segments to be consumed

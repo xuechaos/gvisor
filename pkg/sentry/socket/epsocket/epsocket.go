@@ -824,6 +824,71 @@ func getSockOptSocket(t *kernel.Task, s socket.Socket, ep commonEndpoint, family
 	return nil, syserr.ErrProtocolNotAvailable
 }
 
+func toUnixMillis(t time.Time) uint32 {
+	return uint32(t.UnixNano() / int64(time.Millisecond))
+}
+
+func populateTCPInfo(i *tcp.TCPInfoOption) *linux.TCPInfo {
+	return &linux.TCPInfo{
+		State: uint8(translateTCPState(i.State)),
+		// CaState
+		// Retransmits
+		// Probes
+		// Backoff
+		// Options
+		WindowScale: uint8(((i.SndWindowScale & 0xf) << 4) | (i.RcvWindowScale & 0xf)),
+		// DeliveryRateAppLimited
+
+		RTO: uint32(i.RTO / time.Microsecond),
+		// ATO
+		SndMss: i.SndMss,
+		RcvMss: i.RcvMss,
+
+		Unacked: i.Unacked,
+		// Sacked
+		// Lost
+		// Retrans
+		// Fackets
+
+		LastDataSent: toUnixMillis(i.LastDataSent),
+		LastAckSent:  0, // Not tracked by Linux.
+		LastDataRecv: toUnixMillis(i.LastDataRecv),
+		LastAckRecv:  toUnixMillis(i.LastAckRecv),
+
+		PMTU:        i.PMTU,
+		RcvSsthresh: i.RcvSsthresh,
+		RTT:         uint32(i.RTT / time.Microsecond),
+		RTTVar:      uint32(i.RTTVar / time.Microsecond),
+		SndSsthresh: i.SndSsthresh,
+		SndCwnd:     i.SndCwnd,
+		Advmss:      i.Advmss,
+		// Reordering
+
+		RcvRTT:   uint32(i.RcvRTT / time.Microsecond),
+		RcvSpace: i.RcvSpace,
+
+		// TotalRetrans
+
+		// PacingRate
+		// MaxPacingRate
+		// BytesAcked
+		// BytesReceived
+		// SegsOut
+		// SegsIn
+
+		// NotSentBytes
+		MinRTT: uint32(i.MinRTT / time.Microsecond),
+		// DataSegsIn
+		// DataSegsOut
+
+		// DeliveryRate
+
+		// BusyTime
+		// RwndLimited
+		// SndBufLimited
+	}
+}
+
 // getSockOptTCP implements GetSockOpt when level is SOL_TCP.
 func getSockOptTCP(t *kernel.Task, ep commonEndpoint, name, outLen int) (interface{}, *syserr.Error) {
 	switch name {
@@ -891,17 +956,14 @@ func getSockOptTCP(t *kernel.Task, ep commonEndpoint, name, outLen int) (interfa
 		return int32(time.Duration(v) / time.Second), nil
 
 	case linux.TCP_INFO:
-		var v tcpip.TCPInfoOption
+		var v tcp.TCPInfoOption
 		if err := ep.GetSockOpt(&v); err != nil {
 			return nil, syserr.TranslateNetstackError(err)
 		}
-
-		// TODO(b/64800844): Translate fields once they are added to
-		// tcpip.TCPInfoOption.
-		info := linux.TCPInfo{}
+		info := populateTCPInfo(&v)
 
 		// Linux truncates the output binary to outLen.
-		ib := binary.Marshal(nil, usermem.ByteOrder, &info)
+		ib := binary.Marshal(nil, usermem.ByteOrder, info)
 		if len(ib) > outLen {
 			ib = ib[:outLen]
 		}
@@ -2309,6 +2371,38 @@ func nicStateFlagsToLinux(f stack.NICStateFlags) uint32 {
 	return rv
 }
 
+// translateTCPState translates an internal endpoint state to the equivalent
+// state in the Linux ABI.
+func translateTCPState(s tcp.EndpointState) uint32 {
+	switch s {
+	case tcp.StateEstablished:
+		return linux.TCP_ESTABLISHED
+	case tcp.StateSynSent:
+		return linux.TCP_SYN_SENT
+	case tcp.StateSynRecv:
+		return linux.TCP_SYN_RECV
+	case tcp.StateFinWait1:
+		return linux.TCP_FIN_WAIT1
+	case tcp.StateFinWait2:
+		return linux.TCP_FIN_WAIT2
+	case tcp.StateTimeWait:
+		return linux.TCP_TIME_WAIT
+	case tcp.StateClose, tcp.StateInitial, tcp.StateBound, tcp.StateConnecting, tcp.StateError:
+		return linux.TCP_CLOSE
+	case tcp.StateCloseWait:
+		return linux.TCP_CLOSE_WAIT
+	case tcp.StateLastAck:
+		return linux.TCP_LAST_ACK
+	case tcp.StateListen:
+		return linux.TCP_LISTEN
+	case tcp.StateClosing:
+		return linux.TCP_CLOSING
+	default:
+		// Internal or unknown state.
+		return 0
+	}
+}
+
 // State implements socket.Socket.State. State translates the internal state
 // returned by netstack to values defined by Linux.
 func (s *SocketOperations) State() uint32 {
@@ -2319,33 +2413,7 @@ func (s *SocketOperations) State() uint32 {
 
 	if !s.isPacketBased() {
 		// TCP socket.
-		switch tcp.EndpointState(s.Endpoint.State()) {
-		case tcp.StateEstablished:
-			return linux.TCP_ESTABLISHED
-		case tcp.StateSynSent:
-			return linux.TCP_SYN_SENT
-		case tcp.StateSynRecv:
-			return linux.TCP_SYN_RECV
-		case tcp.StateFinWait1:
-			return linux.TCP_FIN_WAIT1
-		case tcp.StateFinWait2:
-			return linux.TCP_FIN_WAIT2
-		case tcp.StateTimeWait:
-			return linux.TCP_TIME_WAIT
-		case tcp.StateClose, tcp.StateInitial, tcp.StateBound, tcp.StateConnecting, tcp.StateError:
-			return linux.TCP_CLOSE
-		case tcp.StateCloseWait:
-			return linux.TCP_CLOSE_WAIT
-		case tcp.StateLastAck:
-			return linux.TCP_LAST_ACK
-		case tcp.StateListen:
-			return linux.TCP_LISTEN
-		case tcp.StateClosing:
-			return linux.TCP_CLOSING
-		default:
-			// Internal or unknown state.
-			return 0
-		}
+		return translateTCPState(tcp.EndpointState(s.Endpoint.State()))
 	}
 
 	// TODO(b/112063468): Export states for UDP, ICMP, and raw sockets.

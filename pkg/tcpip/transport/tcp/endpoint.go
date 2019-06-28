@@ -108,6 +108,73 @@ func (s EndpointState) String() string {
 	}
 }
 
+// TCPInfoOption is used by GetSockOpt to expose TCP statistics.
+//
+// Source: uapi/linux/tcp.h.
+type TCPInfoOption struct {
+	State       EndpointState
+	CaState     uint8
+	Retransmits uint8
+	Probes      uint8
+	Backoff     uint8
+	Options     uint8
+
+	// Following two fields form the composite value:
+	//   tcpi_wscale = uint8(snd_wscale << 4 | rcv_wscale)
+	SndWindowScale uint8 // Only first 4 bits valid.
+	RcvWindowScale uint8 // Only first 4 bits valid.
+
+	DeliveryRateAppLimited bool
+
+	RTO    time.Duration
+	ATO    time.Duration
+	SndMss uint32
+	RcvMss uint32
+
+	Unacked uint32
+	Sacked  uint32
+	Lost    uint32
+	Retrans uint32
+	Fackets uint32
+
+	LastDataSent time.Time
+	LastAckSent  time.Time
+	LastDataRecv time.Time
+	LastAckRecv  time.Time
+
+	PMTU        uint32
+	RcvSsthresh uint32
+	RTT         time.Duration
+	RTTVar      time.Duration
+	SndSsthresh uint32
+	SndCwnd     uint32
+	Advmss      uint32
+	Reordering  uint32
+
+	RcvRTT   time.Duration
+	RcvSpace uint32
+
+	TotalRetrans uint32
+
+	PacingRate    uint64
+	MaxPacingRate uint64
+	BytesAcked    uint64
+	BytesReceived uint64
+	SegsOut       uint32
+	SegsIn        uint32
+
+	NotSentBytes uint32
+	MinRTT       time.Duration
+	DataSegsIn   uint32
+	DataSegsOut  uint32
+
+	DeliveryRate uint64
+
+	BusyTime      time.Duration
+	RwndLimited   time.Duration
+	SndBufLimited time.Duration
+}
+
 // Reasons for notifying the protocol goroutine.
 const (
 	notifyNonZeroReceiveWindow = 1 << iota
@@ -207,6 +274,8 @@ type endpoint struct {
 	rcvBufSize    int
 	rcvBufUsed    int
 	rcvAutoParams rcvBufAutoTuneParams
+	rcvLastAck    time.Time
+	rcvLastData   time.Time
 	// zeroWindow indicates that the window was closed due to receive buffer
 	// space being filled up. This is set by the worker goroutine before
 	// moving a segment to the rcvList. This setting is cleared by the
@@ -1086,6 +1155,50 @@ func (e *endpoint) readyReceiveSize() (int, *tcpip.Error) {
 	return e.rcvBufUsed, nil
 }
 
+// tcpInfo populates a TCP info struct from an endpoint.
+func (e *endpoint) tcpInfo() *TCPInfoOption {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	e.rcvListMu.Lock()
+	defer e.rcvListMu.Unlock()
+
+	i := &TCPInfoOption{
+		State:        e.state,
+		RcvMss:       uint32(e.receiveBufferAvailableLocked()),
+		LastDataRecv: e.rcvLastData,
+		LastAckRecv:  e.rcvLastAck,
+
+		PMTU:     e.route.MTU(),
+		Advmss:   uint32(e.amss),
+		RcvRTT:   time.Duration(e.rcvAutoParams.rtt),
+		RcvSpace: uint32(e.rcvBufSize),
+		MinRTT:   time.Duration(e.rcvAutoParams.rtt), // We only track the mininum RTT.
+	}
+
+	snd := e.snd
+	if snd != nil {
+		i.SndWindowScale = snd.sndWndScale
+		i.RTO = snd.rto
+		i.SndMss = uint32(snd.maxPayloadSize)
+		i.Unacked = uint32(snd.outstanding)
+		i.LastDataSent = snd.lastSendTime
+		i.SndSsthresh = uint32(snd.sndSsthresh)
+		i.SndCwnd = uint32(snd.sndWnd)
+
+		snd.rtt.Lock()
+		defer snd.rtt.Unlock()
+		i.RTT = snd.rtt.srtt
+		i.RTTVar = snd.rtt.rttvar
+	}
+
+	rcv := e.rcv
+	if rcv != nil {
+		i.RcvWindowScale = rcv.rcvWndScale
+	}
+
+	return i
+}
+
 // GetSockOpt implements tcpip.Endpoint.GetSockOpt.
 func (e *endpoint) GetSockOpt(opt interface{}) *tcpip.Error {
 	switch o := opt.(type) {
@@ -1176,17 +1289,8 @@ func (e *endpoint) GetSockOpt(opt interface{}) *tcpip.Error {
 		}
 		return nil
 
-	case *tcpip.TCPInfoOption:
-		*o = tcpip.TCPInfoOption{}
-		e.mu.RLock()
-		snd := e.snd
-		e.mu.RUnlock()
-		if snd != nil {
-			snd.rtt.Lock()
-			o.RTT = snd.rtt.srtt
-			o.RTTVar = snd.rtt.rttvar
-			snd.rtt.Unlock()
-		}
+	case *TCPInfoOption:
+		*o = *e.tcpInfo()
 		return nil
 
 	case *tcpip.KeepaliveEnabledOption:
@@ -2030,8 +2134,8 @@ func (e *endpoint) initGSO() {
 // State implements tcpip.Endpoint.State. It exports the endpoint's protocol
 // state for diagnostics.
 func (e *endpoint) State() uint32 {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	return uint32(e.state)
 }
 
