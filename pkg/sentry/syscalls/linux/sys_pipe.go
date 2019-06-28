@@ -15,20 +15,19 @@
 package linux
 
 import (
-	"syscall"
-
 	"gvisor.dev/gvisor/pkg/abi/linux"
 	"gvisor.dev/gvisor/pkg/sentry/arch"
 	"gvisor.dev/gvisor/pkg/sentry/kernel"
 	"gvisor.dev/gvisor/pkg/sentry/kernel/kdefs"
 	"gvisor.dev/gvisor/pkg/sentry/kernel/pipe"
 	"gvisor.dev/gvisor/pkg/sentry/usermem"
+	"gvisor.dev/gvisor/pkg/syserror"
 )
 
 // pipe2 implements the actual system call with flags.
 func pipe2(t *kernel.Task, addr usermem.Addr, flags uint) (uintptr, error) {
 	if flags&^(linux.O_NONBLOCK|linux.O_CLOEXEC) != 0 {
-		return 0, syscall.EINVAL
+		return 0, syserror.EINVAL
 	}
 	r, w := pipe.NewConnectedPipe(t, pipe.DefaultPipeSize, usermem.PageSize)
 
@@ -56,7 +55,7 @@ func pipe2(t *kernel.Task, addr usermem.Addr, flags uint) (uintptr, error) {
 	if _, err := t.CopyOut(addr, []kdefs.FD{rfd, wfd}); err != nil {
 		t.FDMap().Remove(rfd)
 		t.FDMap().Remove(wfd)
-		return 0, syscall.EFAULT
+		return 0, syserror.EFAULT
 	}
 	return 0, nil
 }

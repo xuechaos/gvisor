@@ -756,7 +756,7 @@ func Close(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Syscall
 	defer file.DecRef()
 
 	err := file.Flush(t)
-	return 0, nil, handleIOError(t, false /* partial */, err, syscall.EINTR, "close", file)
+	return 0, nil, handleIOError(t, false /* partial */, err, syserror.EINTR, "close", file)
 }
 
 // Dup implements linux syscall dup(2).
@@ -897,7 +897,7 @@ func Fcntl(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Syscall
 
 		// Copy in the lock request.
 		flockAddr := args[2].Pointer()
-		var flock syscall.Flock_t
+		var flock linux.Flock
 		if _, err := t.CopyIn(flockAddr, &flock); err != nil {
 			return 0, nil, err
 		}
@@ -946,11 +946,11 @@ func Fcntl(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Syscall
 		// These locks don't block; execute the non-blocking operation using the inode's lock
 		// context directly.
 		switch flock.Type {
-		case syscall.F_RDLCK:
+		case linux.F_RDLCK:
 			if !file.Flags().Read {
 				return 0, nil, syserror.EBADF
 			}
-			if cmd == syscall.F_SETLK {
+			if cmd == linux.F_SETLK {
 				// Non-blocking lock, provide a nil lock.Blocker.
 				if !file.Dirent.Inode.LockCtx.Posix.LockRegion(lockUniqueID, lock.ReadLock, rng, nil) {
 					return 0, nil, syserror.EAGAIN
@@ -962,11 +962,11 @@ func Fcntl(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Syscall
 				}
 			}
 			return 0, nil, nil
-		case syscall.F_WRLCK:
+		case linux.F_WRLCK:
 			if !file.Flags().Write {
 				return 0, nil, syserror.EBADF
 			}
-			if cmd == syscall.F_SETLK {
+			if cmd == linux.F_SETLK {
 				// Non-blocking lock, provide a nil lock.Blocker.
 				if !file.Dirent.Inode.LockCtx.Posix.LockRegion(lockUniqueID, lock.WriteLock, rng, nil) {
 					return 0, nil, syserror.EAGAIN
@@ -978,7 +978,7 @@ func Fcntl(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Syscall
 				}
 			}
 			return 0, nil, nil
-		case syscall.F_UNLCK:
+		case linux.F_UNLCK:
 			file.Dirent.Inode.LockCtx.Posix.UnlockRegion(lockUniqueID, rng)
 			return 0, nil, nil
 		default:
@@ -1463,7 +1463,7 @@ func Truncate(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Sysc
 
 	if uint64(length) >= t.ThreadGroup().Limits().Get(limits.FileSize).Cur {
 		t.SendSignal(&arch.SignalInfo{
-			Signo: int32(syscall.SIGXFSZ),
+			Signo: int32(linux.SIGXFSZ),
 			Code:  arch.SignalInfoUser,
 		})
 		return 0, nil, syserror.EFBIG
@@ -1523,7 +1523,7 @@ func Ftruncate(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Sys
 
 	if uint64(length) >= t.ThreadGroup().Limits().Get(limits.FileSize).Cur {
 		t.SendSignal(&arch.SignalInfo{
-			Signo: int32(syscall.SIGXFSZ),
+			Signo: int32(linux.SIGXFSZ),
 			Code:  arch.SignalInfoUser,
 		})
 		return 0, nil, syserror.EFBIG
@@ -1813,7 +1813,7 @@ func Utime(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Syscall
 	// No timesAddr argument will be interpreted as current system time.
 	ts := defaultSetToSystemTimeSpec()
 	if timesAddr != 0 {
-		var times syscall.Utimbuf
+		var times linux.Utime
 		if _, err := t.CopyIn(timesAddr, &times); err != nil {
 			return 0, nil, err
 		}
@@ -2005,7 +2005,7 @@ func Fallocate(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Sys
 	}
 	if uint64(size) >= t.ThreadGroup().Limits().Get(limits.FileSize).Cur {
 		t.SendSignal(&arch.SignalInfo{
-			Signo: int32(syscall.SIGXFSZ),
+			Signo: int32(linux.SIGXFSZ),
 			Code:  arch.SignalInfoUser,
 		})
 		return 0, nil, syserror.EFBIG

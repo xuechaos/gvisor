@@ -15,13 +15,13 @@
 package syscalls
 
 import (
-	"syscall"
 	"time"
 
 	"gvisor.dev/gvisor/pkg/sentry/kernel"
 	"gvisor.dev/gvisor/pkg/sentry/kernel/epoll"
 	"gvisor.dev/gvisor/pkg/sentry/kernel/kdefs"
 	ktime "gvisor.dev/gvisor/pkg/sentry/kernel/time"
+	"gvisor.dev/gvisor/pkg/syserror"
 	"gvisor.dev/gvisor/pkg/waiter"
 )
 
@@ -46,21 +46,21 @@ func AddEpoll(t *kernel.Task, epfd kdefs.FD, fd kdefs.FD, flags epoll.EntryFlags
 	// Get epoll from the file descriptor.
 	epollfile := t.FDMap().GetFile(epfd)
 	if epollfile == nil {
-		return syscall.EBADF
+		return syserror.EBADF
 	}
 	defer epollfile.DecRef()
 
 	// Get the target file id.
 	file := t.FDMap().GetFile(fd)
 	if file == nil {
-		return syscall.EBADF
+		return syserror.EBADF
 	}
 	defer file.DecRef()
 
 	// Extract the epollPoll operations.
 	e, ok := epollfile.FileOperations.(*epoll.EventPoll)
 	if !ok {
-		return syscall.EBADF
+		return syserror.EBADF
 	}
 
 	// Try to add the entry.
@@ -72,21 +72,21 @@ func UpdateEpoll(t *kernel.Task, epfd kdefs.FD, fd kdefs.FD, flags epoll.EntryFl
 	// Get epoll from the file descriptor.
 	epollfile := t.FDMap().GetFile(epfd)
 	if epollfile == nil {
-		return syscall.EBADF
+		return syserror.EBADF
 	}
 	defer epollfile.DecRef()
 
 	// Get the target file id.
 	file := t.FDMap().GetFile(fd)
 	if file == nil {
-		return syscall.EBADF
+		return syserror.EBADF
 	}
 	defer file.DecRef()
 
 	// Extract the epollPoll operations.
 	e, ok := epollfile.FileOperations.(*epoll.EventPoll)
 	if !ok {
-		return syscall.EBADF
+		return syserror.EBADF
 	}
 
 	// Try to update the entry.
@@ -98,21 +98,21 @@ func RemoveEpoll(t *kernel.Task, epfd kdefs.FD, fd kdefs.FD) error {
 	// Get epoll from the file descriptor.
 	epollfile := t.FDMap().GetFile(epfd)
 	if epollfile == nil {
-		return syscall.EBADF
+		return syserror.EBADF
 	}
 	defer epollfile.DecRef()
 
 	// Get the target file id.
 	file := t.FDMap().GetFile(fd)
 	if file == nil {
-		return syscall.EBADF
+		return syserror.EBADF
 	}
 	defer file.DecRef()
 
 	// Extract the epollPoll operations.
 	e, ok := epollfile.FileOperations.(*epoll.EventPoll)
 	if !ok {
-		return syscall.EBADF
+		return syserror.EBADF
 	}
 
 	// Try to remove the entry.
@@ -124,14 +124,14 @@ func WaitEpoll(t *kernel.Task, fd kdefs.FD, max int, timeout int) ([]epoll.Event
 	// Get epoll from the file descriptor.
 	epollfile := t.FDMap().GetFile(fd)
 	if epollfile == nil {
-		return nil, syscall.EBADF
+		return nil, syserror.EBADF
 	}
 	defer epollfile.DecRef()
 
 	// Extract the epollPoll operations.
 	e, ok := epollfile.FileOperations.(*epoll.EventPoll)
 	if !ok {
-		return nil, syscall.EBADF
+		return nil, syserror.EBADF
 	}
 
 	// Try to read events and return right away if we got them or if the
@@ -164,7 +164,7 @@ func WaitEpoll(t *kernel.Task, fd kdefs.FD, max int, timeout int) ([]epoll.Event
 		}
 
 		if err := t.BlockWithDeadline(ch, haveDeadline, deadline); err != nil {
-			if err == syscall.ETIMEDOUT {
+			if err == syserror.ETIMEDOUT {
 				return nil, nil
 			}
 
