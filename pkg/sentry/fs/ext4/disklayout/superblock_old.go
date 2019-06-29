@@ -16,12 +16,6 @@ package disklayout
 
 // SuperBlockOld implements SuperBlock and represents the old version of the
 // superblock struct in ext2 and ext3 systems.
-//
-// The suffix `Lo` here stands for lower bits because this is also used in the
-// 64-bit version where these fields represent the lower half of the fields.
-// The suffix `Raw` has been added to indicate that the field does not have a
-// counterpart in the 64-bit version and to resolve name collision with the
-// interface.
 type SuperBlockOld struct {
 	InodesCountRaw      uint32
 	BlocksCountLo       uint32
