@@ -8,6 +8,13 @@ go_library(
         "block_group.go",
         "block_group_32.go",
         "block_group_64.go",
+        "dirent.go",
+        "dirent2.go",
+        "dirent_orig.go",
+        "disklayout.go",
+        "inode.go",
+        "inode_new.go",
+        "inode_old.go",
         "superblock.go",
         "superblock_32.go",
         "superblock_64.go",
@@ -15,7 +22,13 @@ go_library(
         "test_utils.go",
     ],
     importpath = "gvisor.dev/gvisor/pkg/sentry/fs/ext4/disklayout",
-    deps = ["//pkg/binary"],
+    deps = [
+        "//pkg/abi/linux",
+        "//pkg/binary",
+        "//pkg/sentry/fs",
+        "//pkg/sentry/kernel/auth",
+        "//pkg/sentry/kernel/time",
+    ],
 )
 
 go_test(
@@ -23,7 +36,9 @@ go_test(
     size = "small",
     srcs = [
         "block_group_test.go",
+        "inode_test.go",
         "superblock_test.go",
     ],
     embed = [":disklayout"],
+    deps = ["//pkg/sentry/kernel/time"],
 )
