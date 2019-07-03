@@ -663,6 +663,11 @@ func (mns *MountNamespace) ResolveExecutablePath(ctx context.Context, wd, name s
 		}
 		defer d.DecRef()
 
+		// Make sure it is a file.
+		if !fs.IsRegular(d.Inode.StableAttr) {
+			continue
+		}
+
 		// Check whether we can read and execute the found file.
 		if err := d.Inode.CheckPermission(ctx, PermMask{Read: true, Execute: true}); err != nil {
 			log.Infof("Found executable at %q, but user cannot execute it: %v", binPath, err)
